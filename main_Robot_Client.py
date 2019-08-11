@@ -41,7 +41,7 @@ from Laser import Laser
 import v4l2_python
 reload(sys)
 sys.setdefaultencoding('utf-8')
-
+print("Program started on:"+time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
 #gcc wiring_pwm.c -fpic -shared -o wiring_pwm.so -lwiringPi
 drive = cdll.LoadLibrary("./wiring_pwm.so")
 drive.hard_pwm_init()

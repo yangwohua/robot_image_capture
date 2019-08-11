@@ -22,6 +22,7 @@ socket创建优化，面对对象，轻松解决连接超时问题
 '''
 
 import os
+#from __future__ import print_function
 import RPi.GPIO as GPIO
 import threading
 import socket              
@@ -57,8 +58,8 @@ Distence_flag = 0
 pgz_ID = "pgz002"
 send_video_flag = True
 
-que = PriorityQueue()
-que2 = PriorityQueue()
+que = PriorityQueue(50)
+que2 = PriorityQueue(50)
 threadLock = threading.Lock()
 
 class PRESURE(BMP085):
@@ -196,6 +197,7 @@ def det_heartbeat(socket_server):
 
 #将心跳包放入队列
 def EightTimeS():
+    global que
     alive = "\xaa\x96\xab\x00\x00\x00\x69"
     hard_ID()       #将机器人ID放入队列
     while 1:
@@ -210,11 +212,22 @@ def send_to_server(socket_server):
     while 1:
         try:
             if(ISLOCK == 0):
+                
                 if (que.empty() == False):
-                    socket_server.send(que.get()[1])
+                    data = que.get()[1]
+                    socket_server.send(data)
+                    if(data == "\xaa\x96\xab\x00\x00\x00\x69"):
+                        print("成功发送心跳包"),
+                        print("on:"+time.strftime("%H:%M:%S", time.localtime()))
+                    #print(data[0:2])
                     ISLOCK = 1
+                elif que.empty():
+                    print(que.empty())
+                elif que.full():
+                    print(que.full())
         except Exception as e:
             print("Send to server error", e) 
+            print("Exception on:"+time.strftime("%H:%M:%S", time.localtime()))
             # failure
             break
 
@@ -247,8 +260,9 @@ def rev_from_server(socket_server):
                         if( rev_str[3]==b"\x02"):
                             pass
                 ISLOCK = 0
-        except:
-            print("Rev_from server error")
+        except Exception as e:
+            print("Rev_from server error", e)
+            print("Exception on:"+time.strftime("%H:%M:%S", time.localtime()))
             socket_server.close()
             break
 
@@ -314,8 +328,9 @@ def rev_from_app(socket_app):
                             que2.put(b"\xAA\x96\xAC\x02\x01\x00"+relative_altitude+b"\x69")     
                             #que2.put(b"\xAA\x96\xAC\x02\x01\x00"+str(bmp.relative_altitude)+b"\x69")                                          
                             #print "DBG: The current Altitude is  %.2f m" % bmp.relative_altitude
-        except:
-            print("Rev_from app error")
+        except Exception as e:
+            print("Rev_from app error" ,e)
+            print("Exception on:"+time.strftime("%H:%M:%S", time.localtime()))
             #socket_app.close()
             break
 #暗线发送数据函数
@@ -329,6 +344,7 @@ def send_to_app(socket_app):
                     socket_app.send(que2.get())
         except Exception as e:
             print("Socket2 Send Error", e)
+            print("Exception on:"+time.strftime("%H:%M:%S", time.localtime()))
             break
 
 #将机器人ID放入队列

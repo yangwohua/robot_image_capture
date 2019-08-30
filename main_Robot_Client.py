@@ -2,16 +2,16 @@
 #coding=utf-8
 '''
 1.0版本
-这个版本将某些控制性的变量改用字典定义
-在激光测距和高度模块屏蔽的情况下执行
-用来测试传图片，测试与服务器的通信
+    这个版本将某些控制性的变量改用字典定义
+    在激光测距和高度模块屏蔽的情况下执行
+    用来测试传图片，测试与服务器的通信
 
 1.1版本
-socket创建优化，面对对象，轻松解决连接超时问题
-设置一个变量timeout， 按照需要设置成5s, 10s, 20s 等确定的值
-使用线程创建socket，线程开启后用join(timeout)方法，阻塞timeout 秒 的时间
-如果连接成功，阻塞立即解除，设置标志位为true
-如果连接失败，阻塞timeout 秒之后，设置标志位为false
+    socket创建优化，面对对象，轻松解决连接超时问题
+    设置一个变量timeout， 按照需要设置成5s, 10s, 20s 等确定的值
+    使用线程创建socket，线程开启后用join(timeout)方法，阻塞timeout 秒 的时间
+    如果连接成功，阻塞立即解除，设置标志位为true
+    如果连接失败，阻塞timeout 秒之后，设置标志位为false
 
 1.1.1版本
     试试将以前版本的用作心跳包测试
@@ -25,6 +25,7 @@ import os
 #from __future__ import print_function
 import RPi.GPIO as GPIO
 import threading
+import multiprocessing
 import socket              
 import time 
 from Queue import PriorityQueue
@@ -44,7 +45,7 @@ reload(sys)
 sys.setdefaultencoding('utf-8')
 print("Program started on:"+time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
 #gcc wiring_pwm.c -fpic -shared -o wiring_pwm.so -lwiringPi
-drive = cdll.LoadLibrary("./wiring_pwm.so")
+drive = cdll.LoadLibrary("/home/pi/workspace/main_robot_test/0809/wiring_pwm.so")
 drive.hard_pwm_init()
 
 #GlobalVariable
@@ -77,11 +78,11 @@ try:                #初始化两个激光测距模块
     i = 0
     j = 0
     laser = Laser(debug = False)
-    while (i<20):               #循环测试20次
+    while (i<10):               #循环测试20次
         laser.fastMeasure_1()
         i = i+1
     value_laser_1 = laser.fastMeasure_1()
-    while (j<20):               #循环测试20次
+    while (j<10):               #循环测试20次
         laser.fastMeasure_2()
         j = j+1
     value_laser_2 = laser.fastMeasure_2()
@@ -169,6 +170,7 @@ def fun_picture2():
         print("camera2 error", e) 
 
 def fun_video():
+    global send_video_flag
     cam3 = v4l2_python.Camera(3)
     cam3.init_stream_on()
     cam3.filter_invalid_data()
@@ -176,11 +178,14 @@ def fun_video():
     try:
         while True:
             frame_data = cam3.get_frame_data()
-            pic_len = hex(len(frame_data))
-            hnum = int( len( frame_data)/256)
-            lnum = int( len( frame_data)%256)
-            packet = b"\xAA\x96\xAC\x03"+six.int2byte(lnum)+six.int2byte(hnum)+frame_data+b"\x69"       #AC代表送机器人发送到APP
-            que2.put(packet)
+            if (send_video_flag == False):
+                print("开始传输图片到手机")
+                pic_len = hex(len(frame_data))
+                hnum = int( len( frame_data)/256)
+                lnum = int( len( frame_data)%256)
+                packet = b"\xAA\x96\xAC\x03"+six.int2byte(lnum)+six.int2byte(hnum)+frame_data+b"\x69"       #AC代表送机器人发送到APP
+                que2.put(packet)
+                send_video_flag = True    
             #time.sleep(0.3)
     except Exception as e:
         print("camera video error", e) 
@@ -202,6 +207,8 @@ def EightTimeS():
     hard_ID()       #将机器人ID放入队列
     while 1:
         que.put((1, alive))
+        print("put 心跳包成功"), 
+        print("on:"+time.strftime("%H:%M:%S", time.localtime()))
         time.sleep(4)
 
 #明线socket发送线程
@@ -222,12 +229,15 @@ def send_to_server(socket_server):
                     #print(data[0:2])
                     ISLOCK = 1
                 elif que.empty():
-                    print(que.empty())
+                    pass
+                    #print("空空如也")
                 elif que.full():
-                    print(que.full())
+                    pass
+                    #print("满心欢喜")
         except Exception as e:
             print("Send to server error", e) 
             print("Exception on:"+time.strftime("%H:%M:%S", time.localtime()))
+            drive.stop()
             # failure
             break
 
@@ -261,9 +271,11 @@ def rev_from_server(socket_server):
                             pass
                 ISLOCK = 0
         except Exception as e:
+            drive.stop()
             print("Rev_from server error", e)
             print("Exception on:"+time.strftime("%H:%M:%S", time.localtime()))
             socket_server.close()
+
             break
 
 #暗线接收数据
@@ -322,20 +334,19 @@ def rev_from_app(socket_app):
                     elif( rev_str[3]==b"\x02"):
                         if(rev_str[6] == b"\x01"):   
                             #bmp.Get_relative_altitude()
-                            relative_altitude = 6
-                            #relative_altitude = str(relative_altitude)
+                            #relative_altitude = "%.2f"%6
                             relative_altitude = "%.2f" %(bmp.readAltitude())
                             que2.put(b"\xAA\x96\xAC\x02\x01\x00"+relative_altitude+b"\x69")     
                             #que2.put(b"\xAA\x96\xAC\x02\x01\x00"+str(bmp.relative_altitude)+b"\x69")                                          
                             #print "DBG: The current Altitude is  %.2f m" % bmp.relative_altitude
         except Exception as e:
+            drive.stop()
             print("Rev_from app error" ,e)
             print("Exception on:"+time.strftime("%H:%M:%S", time.localtime()))
             #socket_app.close()
             break
 #暗线发送数据函数
 def send_to_app(socket_app):
-    global send_video_flag
     global que2
 
     while 1:
@@ -343,6 +354,7 @@ def send_to_app(socket_app):
             if (que2.empty() == False ):
                     socket_app.send(que2.get())
         except Exception as e:
+            drive.stop()
             print("Socket2 Send Error", e)
             print("Exception on:"+time.strftime("%H:%M:%S", time.localtime()))
             break
@@ -370,15 +382,23 @@ class socket_init(object):
         self.host_server = host
         self.port_server = int(port)
         self.socket_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket_server.connect((self.host_server, self.port_server)) 
+        try:
+            self.socket_server.connect((self.host_server, self.port_server)) 
+        except:
+            print("connection timeout")
 
         time.sleep(0.5)
 
         self.host_app = host
         self.port_app = int(port)
+        self.addr = (self.host_app, self.port_app)
         self.socket_app = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket_app.connect((self.host_app, self.port_server)) 
-
+        try:
+            self.socket_app.connect(self.addr) 
+        except:
+            print("connection timeout")
+        else:
+            print ('...connected from :', self.addr)
         self.link_check = "true"
     def __del__(self):
         if(self.link_check == 'true'):
@@ -449,7 +469,6 @@ def start_all_thread():
        Thread6.start()
     except:
        print ('thread6 start exception')
-    
     
     try:
        Thread7 = threading.Thread( target = fun_picture0, args = ( ) )

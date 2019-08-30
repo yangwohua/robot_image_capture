@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 import smbus
-
+import sys
 # ===========================================================================
 # Raspi_I2C Class
 # ===========================================================================
@@ -48,7 +48,7 @@ class Raspi_I2C :
 
   def errMsg(self):
     print "Error int BMP180. Error accessing 0x%02X: Check your I2C address, please press disconnect to quit" % self.address
-    sys.exit(1)
+    #sys.exit(1)
     return -1
 
   def write8(self, reg, value):
@@ -57,7 +57,8 @@ class Raspi_I2C :
       self.bus.write_byte_data(self.address, reg, value)
       if self.debug:
         print "I2C: Wrote 0x%02X to register 0x%02X" % (value, reg)
-    except IOError, err:
+    except IOError as err:
+      print err
       return self.errMsg()
 
   def write16(self, reg, value):

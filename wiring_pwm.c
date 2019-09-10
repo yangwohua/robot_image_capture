@@ -15,13 +15,15 @@ void hard_pwm_init()
 	pinMode(pwm_pin1, PWM_OUTPUT);
 	pinMode(pwm_pin2, PWM_OUTPUT);
 	pwmSetRange(100);
+	pwmWrite(pwm_pin1, 0);
+	pwmWrite(pwm_pin2, 0);
 }
-void up(unsigned int speed)
+void down(unsigned int speed)
 {
 	int clock_div;
 	clock_div = speed;
 	//clock_div = 512;
-	printf("设置分频值：%d\n", clock_div);
+	//printf("down设置分频值：%d\n", clock_div);
 	pwmSetClock(clock_div);
 	pwmSetRange(1024);
 
@@ -29,11 +31,11 @@ void up(unsigned int speed)
 	pwmWrite(pwm_pin2, 0);
 }
 
-void down(unsigned int speed)
+void up(unsigned int speed)
 {
 	int clock_div;
 	clock_div = speed;
-	printf("设置分频值：%d\n", clock_div);
+	//printf("up设置分频值：%d\n", clock_div);
 
 	pwmSetClock(clock_div);
 	pwmSetRange(1024);
@@ -55,12 +57,15 @@ int main(void)
 {
 	hard_pwm_init(); // wiringPi库初始化
 
-	//up(312);
+	up(112);
 	printf("sleep 5 second !!!!\n");
-	//sleep(5);
+	sleep(5);
 	printf("sleep 5 second over\n");
 	//stop();
 	//sleep(2);
+	stop();
+	sleep(1);
+	printf("down now \n");
 	down(112);
 	//while (1);
 	sleep(5);

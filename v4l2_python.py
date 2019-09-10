@@ -1,4 +1,3 @@
-import cv2
 from fcntl import ioctl
 import mmap
 import numpy as np
@@ -10,6 +9,7 @@ import time
 
 class Camera(object):
     NUM_BUFFERS = 4
+    device_num = None
     def __init__(self, device_num):
         self.device_num = device_num
         self.device_name = "/dev/video%d"%device_num
@@ -86,21 +86,26 @@ class Camera(object):
             print (e)
 
     def main_loop(self):
-        path_name = "./cam%d_pictures/"%self.device_num
+        temp_name = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
+        path_name = "/home/pi/Pictures/"+temp_name+"/cam%d_pictures/"%self.device_num
         if(os.access(path_name, os.F_OK) == False):
-            os.mkdir(path_name)
+            os.makedirs(path_name, 0777)
         pic_count = 0
         print("camera%dstart capturing ..."%self.device_num)
-        while True:
-            #time.sleep(0.05)
-            for x in range(self.NUM_BUFFERS):
-                #print "grabbing frame {}".format(x)
-                buf = self.buffers[x]
-                ioctl(self.fd, v4l2.VIDIOC_DQBUF, buf)
-                self.process_image(buf, path_name, pic_count)
-                ioctl(self.fd, v4l2.VIDIOC_QBUF, buf)
-                pic_count = pic_count+1
-
+        try:
+            while True:
+                #time.sleep(0.05)
+                for x in range(self.NUM_BUFFERS):
+                    #print "grabbing frame {}".format(x)
+                    buf = self.buffers[x]
+                    ioctl(self.fd, v4l2.VIDIOC_DQBUF, buf)
+                    self.process_image(buf, path_name, pic_count)
+                    ioctl(self.fd, v4l2.VIDIOC_QBUF, buf)
+                    pic_count = pic_count+1
+        except:
+            print ("Q BUF")
+            ioctl(self.fd, v4l2.VIDIOC_QBUF, buf)
+        
     def filter_invalid_data(self):
         for i in range(3):
             for x in range(self.NUM_BUFFERS):
@@ -127,6 +132,14 @@ class Camera(object):
             ioctl(self.fd, v4l2.VIDIOC_QBUF, buf)
             video_type = v4l2.V4L2_BUF_TYPE_VIDEO_CAPTURE
             ioctl(self.fd, v4l2.VIDIOC_STREAMON, struct.pack('i', video_type))
+    def __del__(self):
+        for x in range(self.NUM_BUFFERS):
+            #print "grabbing frame {}".format(x)
+            buf = self.buffers[x]
+            ioctl(self.fd, v4l2.VIDIOC_QBUF, buf)
+        os.close(self.fd)
+        print("close camera %d by _del_" %self.device_num)
+        
 if __name__ == "__main__":
     cam0 = Camera(0)
     #cam0.start_capturing()

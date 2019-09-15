@@ -36,9 +36,8 @@ from io import *
 from ctypes import cdll
 import serial
 from Raspi_BMP085 import BMP085
-from Serial import Laser, Commu_stm32
+from Serial import Laser, Thread_serial
 import v4l2_python
-import raspi_stm
 reload(sys)
 sys.setdefaultencoding('utf-8')
 print("Program started on:"+time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
@@ -61,38 +60,42 @@ class PRESURE(BMP085):
         self.Origin_Altitude = BMP085(0x77, 1).readAltitude()
 
     def Get_relative_altitude(self):            #计算相对高度
-        re_altitude = BMP085(0x77, 1).readAltitude() - self.Origin_Altitude   #相对高度 = 实时高度 - 原始高度
-        if(re_altitude < 1.0):           #相对高度小于1时不计算
-            self.relative_altitude = 0
-        else:
+        while 1:
+            
+            re_altitude = BMP085(0x77, 1).readAltitude() - self.Origin_Altitude   #相对高度 = 实时高度 - 原始高度
+            # if(re_altitude < 1.0):           #相对高度小于1时不计算
+            #     self.relative_altitude = 0.0
+            # else:
             self.relative_altitude = re_altitude
+            time.sleep(0.05)
+
   
 try:                #初始化两个激光测距模块
     i = 0
     j = 0
     laser = Laser(debug = False)
     while (i<10):               #循环测试10次
-        value_laser_1 = laser.fastMeasure_1()
+        value_laser_up = laser.fastMeasure_1()
         i = i+1
-        if value_laser_1 == "error":
+        if value_laser_up == "error":
             break
     while (j<10):               #循环测试10次
-        value_laser_2 = laser.fastMeasure_2()
+        value_laser_down = laser.fastMeasure_2()
         j = j+1
-        if value_laser_2 == "error":
+        if value_laser_down == "error":
             break
-    if value_laser_1 or value_laser_2 is not "error":
-        print "DBG: The init laser1 data is  %.2f m" % value_laser_1
-        print "DBG: The init laser2 data is  %.2f m" % value_laser_2
+    if value_laser_up or value_laser_down is not "error":
+        print "DBG: The init laser1 data is  %.2f m" % value_laser_up
+        print "DBG: The init laser2 data is  %.2f m" % value_laser_down
 except Exception as e:
     print("Laser init error", e) 
     #sys.exit(0)
 try:            #初始化大气压传感器
     bmp = PRESURE(0x77, 1, debug = False)  # ULTRAHIRES Mode
+
     bmp.Get_Origin_Altitude()
     print "DBG: The init Altitude data is  %.2f m" % bmp.Origin_Altitude
-    bmp.Get_relative_altitude()
-    print "DBG: The init relative_altitude data is %.2f m" % bmp.relative_altitude
+
     value_bmp180 = bmp.readAltitude()
     print "DBG: The init Altitude data is  %.2f m" % value_bmp180
 except Exception as e:
@@ -387,11 +390,11 @@ class socket_deal(socket_init):
                                 print("接收到STOP")
                                 que_app.put("\xAA\x96\xAC\x01\x01\x00\x01\x69")
                             elif(rev_str[6] == b"\x03"):
-                                self.move_info = 2               #break
+                                self.move_info = 3               #break
                                 self.cmd_change = True 
                                 self.is_pause = False
                                 print self.is_pause
-                                print("接收到STOP")
+                                print("接收到BREAK")
                                 que_app.put("\xAA\x96\xAC\x01\x01\x00\x01\x69")
                             else:
                                 que_app.put("\xAA\x96\xAC\x01\x01\x00\x00\x69")   
@@ -399,9 +402,9 @@ class socket_deal(socket_init):
                         elif( rev_str[3]==b"\x02"):         #任务标识码 = 0x02  位置信息包
                             if(rev_str[6] == b"\x01"):   
                                 #bmp.Get_relative_altitude()
-                                #relative_altitude = "%.2f"%6
-                                relative_altitude = "%.2f" %(bmp.readAltitude())
-                                que_app.put(b"\xAA\x96\xAC\x02\x01\x00"+relative_altitude+b"\x69")     
+                                re_altitude = "%.2f" %bmp.relative_altitude
+                                #relative_altitude = "%.2f" %(bmp.readAltitude())
+                                que_app.put(b"\xAA\x96\xAC\x02\x01\x00"+re_altitude+b"\x69")     
                     
                         else:
                             que_app.put("\xAA\x96\xAC\x04\x01\x00\x01\x69")   
@@ -413,8 +416,6 @@ class socket_deal(socket_init):
                 break
 
 def auto_move_wifi():
-    commu_stm = Commu_stm32()
-    commu_stm.start()
     time.sleep(2)
     while(1): 
         drive.up(212)                                               #上升，上升之后进行判断
@@ -450,113 +451,202 @@ def auto_move_wifi():
                                 drive.stop()
                                 time.sleep(2)
                             print("Program exit normally")
-                            stm_watch.start()
                             return 0
+'''
+上升过程：
+
+'''
+def up_function(serial_monitor, lock = None):
+
+    serial_monitor.mode = 3
+    time.sleep(0.5)
+    drive.up(212)
+    try:
+        while True:
+            if serial_monitor.heart_beat == False:                      #判断单片机心跳，如果停止，进入紧急下降处理
+                raise Exception
+            if so_deal.is_pause and so_deal.is_connected == True:       #如果有暂停指令就让机器人停止，否则机器人上升
+                while True:
+                    #print("is pause!!!")
+                    if (so_deal.cmd_change == True):
+                        so_deal.cmd_change = False
+
+                        if lock!=None:
+                            lock.acquire()
+                        top_dist = serial_monitor.dis_top
+                        if lock!=None:
+                            lock.release()
+                        #lock.release()
+                        
+                        if so_deal.move_info == 0:                          #上升指令 move_info 等于 0
+                            if(top_dist >= 1.0 or top_dist == None):       #到顶部距离大于等于1米并且不是0, 小于1米不执行上升
+                                print(top_dist)
+                                drive.up(112)
+                                time.sleep(1)
+                                drive.stop()
+                            else:
+                                drive.stop()
+                    
+                        elif so_deal.move_info == 1:                        #下降指令 move_info 等于 1
+                            drive.down(112)
+                            time.sleep(1)
+                            drive.stop()
+                            so_deal.move_info = -1
+
+                        elif so_deal.move_info == 2:                        #停止指令 move_info 等于 2
+                            drive.stop()
+                        
+                        elif so_deal.move_info == 3:
+                            drive.up(212)
+                            break
+            if lock!=None:
+                lock.acquire()
+            top_dist = serial_monitor.dis_top
+            if lock!=None:
+                lock.release()
+                print(top_dist)
+            #TODO
+
+            if top_dist != None:
+                top_dist = 2.2
+            if top_dist <= 2.0:
+                drive.up(112)
+            
+            if top_dist <= 0.4 :#TODO 加入到顶的检测开关
+                drive.stop()
+                time.sleep(1)
+                break
+
+    except (Exception, KeyboardInterrupt) as e:
+        if lock!=None:
+            lock.acquire()
+        while serial_monitor.ras_stop_sign != True:
+            serial_monitor.ras_stop_sign = True
+        if lock!=None:
+            lock.release()
+            time.sleep(0.2)
+        serial_monitor.finish()                 #不让单片机接管
+        while 1:
+            drive.down(121)
+            down_dist = serial_monitor.fastMeasure_down()
+            if (down_dist - value_laser_down) <= 0.5 or bmp.relative_altitude <= 0:
+                drive.stop()   
+                 
+        sys.exit(1)
+
+'''
+下降过程：
+
+'''
+def down_function(serial_monitor, lock = None):
+    while serial_monitor.mode != 5:
+        serial_monitor.mode = 5
+    time.sleep(0.05)
+    drive.down(150)
+    
+    try:
+        while True:
+            if serial_monitor.heart_beat == False:                      #判断单片机心跳，如果停止，进入紧急下降处理
+                raise Exception
+            if so_deal.is_pause and so_deal.is_connected == True:       #如果有暂停指令就让机器人停止，否则机器人下降
+                while True:
+                    print("is pause!!!")
+                    if (so_deal.cmd_change == True):
+                        so_deal.cmd_change = False
+
+                        if lock!=None:
+                            lock.acquire()
+                        top_dist = serial_monitor.dis_top
+                        if lock!=None:
+                            lock.release()
+                        #lock.release()
+                        
+                        if so_deal.move_info == 0:                          #上升指令 move_info 等于 0
+                            if(top_dist >= 1.0 or top_dist == None):       #到顶部距离大于等于1米并且不是0, 小于1米不执行上升
+                                print(top_dist)
+                                drive.up(112)
+                                time.sleep(1)
+                                drive.stop()
+                            else:
+                                drive.stop()
+                    
+                        elif so_deal.move_info == 1:                        #下降指令 move_info 等于 1
+                            drive.down(112)
+                            time.sleep(1)
+                            drive.stop()
+                            so_deal.move_info = -1
+
+                        elif so_deal.move_info == 2:                        #停止指令 move_info 等于 2
+                            drive.stop()
+                        
+                        elif so_deal.move_info == 3:
+                            drive.up(212)
+                            break
+            if lock!=None:
+                lock.acquire()
+            down_dis = serial_monitor.dis_down
+            if lock!=None:
+                lock.release()
+
+            if down_dis != None:
+                if (down_dis- value_laser_down) <= 1 or bmp.relative_altitude <=1:
+                    drive.down(100)
+                    time.sleep(1)
+                
+                if (down_dis- value_laser_down) <= 0.5 or bmp.relative_altitude <= 0:
+                    drive.stop()
+                    break
+
+    except (Exception, KeyboardInterrupt) as e:
+        print("Whool!!!",e)
+        if lock!=None:
+            lock.acquire()
+        while serial_monitor.ras_stop_sign != True:
+            serial_monitor.ras_stop_sign = True
+        if lock!=None:
+            lock.release()
+            time.sleep(0.2)
+        serial_monitor.finish()                 #不让单片机接管
+        while 1:
+            drive.down(121)
+            down_dist = serial_monitor.fastMeasure_down()
+            if (down_dist - value_laser_down) <= 0.5 or bmp.relative_altitude <= 0:
+                drive.stop()       
+                sys.exit(1)            
+
    
+
 def auto_move():
     global cam0,cam1,cam2,cam3 
     time.sleep(2)
-    commu_stm = Commu_stm32()
-    commu_stm.start()
-    laser.debug = True
+    serial_monitor = Thread_serial() 
+    serial_monitor.mode = 3
     lock = threading.Lock()
-    Thread_stm = threading.Thread( target = commu_stm.heartbeat, args = (lock, ) )         #每隔8秒发送
+    
+    serial_monitor.start()
+    
+    Thread_stm = threading.Thread( target = serial_monitor.thread_serial, args = (lock, ) )
     Thread_stm.setDaemon(True)
     Thread_stm.start()
     try:
-        while(1): 
-            # if so_deal.is_pause and so_deal.is_connected == True:                           #如果有暂停指令就让机器人停止，否则机器人上升
-            #     if so_deal.cmd_change == True:
-            #         so_deal.cmd_change = False
-            #         if so_deal.move_info == 2:
-            #             drive.stop()
-            #         elif so_deal.move_info == 0:
-            #             top_dist = laser.fastMeasure_1(lock)
-            #             top_dist = laser.fastMeasure_1(lock)
-            #             if(top_dist >= 1.0 and top_dist != None):           #到顶部距离大于等于1米并且不是0, 大于1米不执行上升
-            #                 print(top_dist)
-            #                 drive.up(112)   
-            #                 time.sleep(1)
-            #                 drive.stop()
-            #                 so_deal.move_info = -1
-            #         elif so_deal.move_info == 1:
-            #             drive.down(112)   
-            #             time.sleep(1)
-            #             drive.stop()
-            #             so_deal.move_info = -1
-            #         elif so_deal.move_info == -1:
-            #             drive.stop()
-            #             pass
-            # else:
-            #     drive.up(212)                                               #上升，上升之后进行判断
-            #     if(bmp.relative_altitude >= 0):                             #上升距离已经超过需要高度,用来计算激光可测安全距离： 需要高度 = 桥高 - 50m 
-            #         top_dist = laser.fastMeasure_1(lock)
-            #         if(top_dist <= 1.5 and top_dist != None):               #到顶部距离小于等于1.5米并且不是0， 如果满足条件，减速
-            #             print (top_dist)
-            #             drive.stop()
-            #             time.sleep(1)
-            #             top_dist = laser.fastMeasure_1(lock)
-            #             while(top_dist >= 0.4 and top_dist != None):        #再进行判断，如果顶部距离大于0.4米，继续上升
-            #                 top_dist = laser.fastMeasure_1(lock)
-            #                 drive.up(112)
-            #             else:
+        time.sleep(0.5)
+        up_function(serial_monitor, lock)
 
-            drive.stop()
-            time.sleep(2)
-            while(1):                                       #下降过程
-                # TODO 写标志位停止拍照
-                # if "cam0" in globals() and "cam1" in globals() and "cam2" in globals():
-                #     del cam0,cam1,cam2
+        down_function(serial_monitor, lock)
 
-                while so_deal.is_pause and so_deal.is_connected == True: 
-                    #commu_stm.heartbeat()                                  
-                    if so_deal.move_info == 0:
-                        drive.up(112)
-                        time.sleep(1)
-                        drive.stop()
-                        so_deal.move_info = -1
-                    elif so_deal.move_info == 1:
-                        drive.down(112)
-                        time.sleep(1)
-                        drive.stop()
-                        so_deal.move_info = -1
-                    elif so_deal.move_info == 2:
-                        drive.stop()
-                    
-                    elif so_deal.move_info == -1:
-                        drive.stop()
-                        pass
-                else:
-                    #commu_stm.heartbeat()
-                    drive.down(180)            #下降
-                    low_speed_position = init_position + 0.50
-                    #print "It is time to lower the speed" + str(low_speed_position)
-                    #print type(bmp.relative_altitude), bmp.relative_altitude
-                    if(bmp.relative_altitude <= 10.0):                 #距离地面已经不超过2米
-                        ground_dist = laser.fastMeasure_2(lock)
-                        if( (ground_dist <= (low_speed_position) ) and (ground_dist != None)):#到底部距离小于等于1.0米并且不是0
-                            print (ground_dist)
-                            drive.stop()
-                            time.sleep(1)
-                            ground_dist = laser.fastMeasure_2(lock)
-                            while(ground_dist >= init_position and ground_dist != None):        #再进行判断，如果顶部距离大于0.4米，继续上升
-                                #commu_stm.heartbeat()
-                                ground_dist = laser.fastMeasure_2(lock)
-                                print "测量距离: "+ str(ground_dist) + "停止距离：" + str(init_position)
-                                drive.down(112)
-                            else:
-                                #commu_stm.heartbeat()
-                                drive.stop()
-                                commu_stm.break_point = True
-                                time.sleep(2)
-                            print("Program exit normally")
-                            
-                            commu_stm.finish()
-                            break
-            break    
-    except Exception as e:
-        drive.stop()
+        if lock!=None:
+            lock.acquire()
+        while serial_monitor.ras_stop_sign != True:
+            serial_monitor.ras_stop_sign = True
+        if lock!=None:
+            lock.release()
+        time.sleep(0.2)
+        serial_monitor.finish()
+        print("Program exit normally")                          
+        return
+    except (Exception, KeyboardInterrupt) as e:
         print("Whool!!!",e)
+        drive.stop()       
         sys.exit(1)
 def start_all_thread():
     try:
@@ -633,11 +723,11 @@ def start_all_thread():
 if __name__=="__main__":
 
     #thread_start = 0
-    stm_watch = raspi_stm.watch()
-    stm_watch.start()
-    Thread_watch = threading.Thread( target = stm_watch.detect, args = () )
-    Thread_watch.setDaemon(True)
-    Thread_watch.start()
+    # stm_watch = raspi_stm.watch()
+    # stm_watch.start()
+    Thread_bmp_read = threading.Thread( target = bmp.Get_relative_altitude, args = () )
+    Thread_bmp_read.setDaemon(True)
+    Thread_bmp_read.start()
 
     client = socket_init()
     Thread_socket = threading.Thread( target = client.creat_client, args = (sys.argv[1], sys.argv[2], ) )

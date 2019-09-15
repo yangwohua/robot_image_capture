@@ -258,7 +258,7 @@ class BMP085 :
     return altitude
   
 if __name__ == "__main__":
-    bmp = BMP085(address = 0x77, mode = 1, debug= True)
+    bmp = BMP085(address = 0x77, mode = 3, debug= True)
     value_bmp180_1 = bmp.readAltitude()
 
 
